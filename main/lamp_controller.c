@@ -21,6 +21,10 @@
 #include "nvs_flash.h"
 #include "string.h"
 
+#define ESP_ZB_GATEWAY_ENDPOINT 1 /* Gateway endpoint identifier */
+#define APP_PROD_CFG_CURRENT_VERSION                                           \
+  0x0001 /* Production configuration version */
+
 #if !defined CONFIG_ZB_ZCZR
 #error Define ZB_ZCZR in idf.py menuconfig to compile light switch (Coordinator) source code.
 #endif
@@ -35,43 +39,24 @@ static switch_func_pair_t button_func_pair[] = {
     {GPIO_INPUT_IO_TOGGLE_SWITCH, SWITCH_ONOFF_TOGGLE_CONTROL}};
 
 /* R, G, B of color x,y define table */
-/*
 static uint16_t color_x_table[3] = {41942, 19660, 9830};
 static uint16_t color_y_table[3] = {21626, 38321, 3932};
-*/
 
-static const char *TAG = "ESP_ZB_COLOR_DIMM_SWITCH";
+static const char *TAG = "ESP_LAMP_CONTROLLER";
 
-#define levels_count 5
+/* Production configuration app data */
+typedef struct app_production_config_s {
+  uint16_t version;
+  uint16_t manuf_code;
+  char manuf_name[16];
+} app_production_config_t;
 
 static void zb_buttons_handler(switch_func_pair_t *button_func_pair) {
-  static const uint8_t levels[levels_count] = {255, 200, 150, 100, 50, 20, 1};
-  static uint8_t press_count = 0;
-
-  if (button_func_pair->func == SWITCH_ONOFF_TOGGLE_CONTROL) {
-    esp_zb_zcl_move_to_level_cmd_t cmd_level;
-    cmd_level.zcl_basic_cmd.src_endpoint = HA_COLOR_DIMMABLE_SWITCH_ENDPOINT;
-    cmd_level.address_mode = ESP_ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT;
-    cmd_level.level = levels[press_count % levels_count];
-    cmd_level.transition_time = 0xffff;
-    esp_zb_lock_acquire(portMAX_DELAY);
-    esp_zb_zcl_level_move_to_level_with_onoff_cmd_req(&cmd_level);
-    esp_zb_lock_release();
-    press_count++;
-    printf("press_count: %d\n", press_count);
-  }
-}
-
-// R, G, B of color x,y define table
-static uint16_t color_x_table[3] = {41942, 19660, 9830};
-static uint16_t color_y_table[3] = {21626, 38321, 3932};
-
-static void zb_buttons_handler_old(switch_func_pair_t *button_func_pair) {
   uint8_t step = 10;
   static uint8_t level_value = 5;
   static uint8_t press_count = 0;
   if (button_func_pair->func == SWITCH_ONOFF_TOGGLE_CONTROL) {
-    // implemented light switch toggle functionality
+    /* implemented light switch toggle functionality */
     uint16_t refer_x = color_x_table[press_count % 3];
     uint16_t refer_y = color_y_table[press_count % 3];
     if (press_count % 2 == 1) {
@@ -141,19 +126,16 @@ static void user_find_cb(esp_zb_zdp_status_t zdo_status, uint16_t addr,
     light->short_addr = addr;
     esp_zb_ieee_address_by_short(light->short_addr, light->ieee_addr);
     esp_zb_get_long_address(bind_req.src_address);
-
     bind_req.src_endp = HA_COLOR_DIMMABLE_SWITCH_ENDPOINT;
+    bind_req.cluster_id = ESP_ZB_ZCL_CLUSTER_ID_COLOR_CONTROL;
     bind_req.dst_addr_mode = ESP_ZB_ZDO_BIND_DST_ADDR_MODE_64_BIT_EXTENDED;
     memcpy(bind_req.dst_address_u.addr_long, light->ieee_addr,
            sizeof(esp_zb_ieee_addr_t));
     bind_req.dst_endp = endpoint;
     bind_req.req_dst_addr =
         esp_zb_get_short_address(); /* TODO: Send bind request to self */
-
-    bind_req.cluster_id = ESP_ZB_ZCL_CLUSTER_ID_COLOR_CONTROL;
     ESP_LOGI(TAG, "Try to bind color control");
     esp_zb_zdo_device_bind_req(&bind_req, bind_cb, NULL);
-
     bind_req.cluster_id = ESP_ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL;
     ESP_LOGI(TAG, "Try to bind level control");
     esp_zb_zdo_device_bind_req(&bind_req, bind_cb, (void *)light);
@@ -165,8 +147,21 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
   esp_err_t err_status = signal_struct->esp_err_status;
   esp_zb_app_signal_type_t sig_type = *p_sg_p;
   esp_zb_zdo_signal_device_annce_params_t *dev_annce_params = NULL;
+
   switch (sig_type) {
   case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
+#if CONFIG_EXAMPLE_CONNECT_WIFI
+    ESP_RETURN_ON_FALSE(example_connect() == ESP_OK, , TAG,
+                        "Failed to connect to Wi-Fi");
+#if CONFIG_ESP_COEX_SW_COEXIST_ENABLE
+    ESP_RETURN_ON_FALSE(esp_wifi_set_ps(WIFI_PS_MIN_MODEM) == ESP_OK, , TAG,
+                        "Failed to set Wi-Fi minimum modem power save type");
+    esp_coex_wifi_i154_enable();
+#else
+    ESP_RETURN_ON_FALSE(esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK, , TAG,
+                        "Failed to set Wi-Fi no power save type");
+#endif
+#endif
     ESP_LOGI(TAG, "Initialize Zigbee stack");
     esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_INITIALIZATION);
     break;
@@ -177,6 +172,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
                deferred_driver_init() ? "failed" : "successful");
       ESP_LOGI(TAG, "Device started up in %s factory-reset mode",
                esp_zb_bdb_is_factory_new() ? "" : "non");
+
       if (esp_zb_bdb_is_factory_new()) {
         ESP_LOGI(TAG, "Start network formation");
         esp_zb_bdb_start_top_level_commissioning(
@@ -192,15 +188,15 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
     break;
   case ESP_ZB_BDB_SIGNAL_FORMATION:
     if (err_status == ESP_OK) {
-      esp_zb_ieee_addr_t extended_pan_id;
-      esp_zb_get_extended_pan_id(extended_pan_id);
+      esp_zb_ieee_addr_t ieee_address;
+      esp_zb_get_long_address(ieee_address);
       ESP_LOGI(TAG,
                "Formed network successfully (Extended PAN ID: "
                "%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x, PAN ID: 0x%04hx, "
                "Channel:%d, Short Address: 0x%04hx)",
-               extended_pan_id[7], extended_pan_id[6], extended_pan_id[5],
-               extended_pan_id[4], extended_pan_id[3], extended_pan_id[2],
-               extended_pan_id[1], extended_pan_id[0], esp_zb_get_pan_id(),
+               ieee_address[7], ieee_address[6], ieee_address[5],
+               ieee_address[4], ieee_address[3], ieee_address[2],
+               ieee_address[1], ieee_address[0], esp_zb_get_pan_id(),
                esp_zb_get_current_channel(), esp_zb_get_short_address());
       esp_zb_bdb_start_top_level_commissioning(
           ESP_ZB_BDB_MODE_NETWORK_STEERING);
@@ -223,10 +219,10 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
             p_sg_p);
     ESP_LOGI(TAG, "New device commissioned or rejoined (short: 0x%04hx)",
              dev_annce_params->device_short_addr);
-    esp_zb_zdo_match_desc_req_param_t cmd_req;
+    /* find color dimmable light once device joining the network */
+    esp_zb_zdo_match_desc_req_param_t  cmd_req;
     cmd_req.dst_nwk_addr = dev_annce_params->device_short_addr;
     cmd_req.addr_of_interest = dev_annce_params->device_short_addr;
-    /* find color dimmable light once device joining the network */
     esp_zb_zdo_find_color_dimmable_light(&cmd_req, user_find_cb, NULL);
     break;
   case ESP_ZB_NWK_SIGNAL_PERMIT_JOIN_STATUS:
@@ -241,6 +237,20 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
       }
     }
     break;
+  case ESP_ZB_ZDO_SIGNAL_PRODUCTION_CONFIG_READY:
+    ESP_LOGI(TAG, "Production configuration is ready");
+    if (err_status == ESP_OK) {
+      app_production_config_t *prod_cfg =
+          (app_production_config_t *)esp_zb_app_signal_get_params(p_sg_p);
+      if (prod_cfg->version == APP_PROD_CFG_CURRENT_VERSION) {
+        ESP_LOGI(TAG, "Manufacturer_code: 0x%x, manufacturer_name:%s",
+                 prod_cfg->manuf_code, prod_cfg->manuf_name);
+        esp_zb_set_node_descriptor_manufacturer_code(prod_cfg->manuf_code);
+      }
+    } else {
+      ESP_LOGW(TAG, "Production configuration is not present");
+    }
+    break;
   default:
     ESP_LOGI(TAG, "ZDO signal: %s (0x%x), status: %s",
              esp_zb_zdo_signal_to_string(sig_type), sig_type,
@@ -253,23 +263,33 @@ static void esp_zb_task(void *pvParameters) {
   /* initialize Zigbee stack */
   esp_zb_cfg_t zb_nwk_cfg = ESP_ZB_ZC_CONFIG();
   esp_zb_init(&zb_nwk_cfg);
-  /* set the color dimmable switch device config */
-  esp_zb_color_dimmable_switch_cfg_t switch_cfg =
-      ESP_ZB_DEFAULT_COLOR_DIMMABLE_SWITCH_CONFIG();
-  esp_zb_ep_list_t *esp_zb_color_dimm_switch_ep =
-      esp_zb_color_dimmable_switch_ep_create(HA_COLOR_DIMMABLE_SWITCH_ENDPOINT,
-                                             &switch_cfg);
-  zcl_basic_manufacturer_info_t info = {
-      .manufacturer_name = ESP_MANUFACTURER_NAME,
-      .model_identifier = ESP_MODEL_IDENTIFIER,
+  esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
+  esp_zb_ep_list_t *ep_list = esp_zb_ep_list_create();
+  esp_zb_cluster_list_t *cluster_list = esp_zb_zcl_cluster_list_create();
+  esp_zb_endpoint_config_t endpoint_config = {
+      .endpoint = ESP_ZB_GATEWAY_ENDPOINT,
+      .app_profile_id = ESP_ZB_AF_HA_PROFILE_ID,
+      .app_device_id = ESP_ZB_HA_REMOTE_CONTROL_DEVICE_ID,
+      .app_device_version = 0,
   };
 
-  esp_zcl_utility_add_ep_basic_manufacturer_info(
-      esp_zb_color_dimm_switch_ep, HA_COLOR_DIMMABLE_SWITCH_ENDPOINT, &info);
-  esp_zb_device_register(esp_zb_color_dimm_switch_ep);
-  esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
+  esp_zb_attribute_list_t *basic_cluster = esp_zb_basic_cluster_create(NULL);
+  esp_zb_basic_cluster_add_attr(basic_cluster,
+                                ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID,
+                                ESP_MANUFACTURER_NAME);
+  esp_zb_basic_cluster_add_attr(basic_cluster,
+                                ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,
+                                ESP_MODEL_IDENTIFIER);
+  esp_zb_cluster_list_add_basic_cluster(cluster_list, basic_cluster,
+                                        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+  esp_zb_cluster_list_add_identify_cluster(cluster_list,
+                                           esp_zb_identify_cluster_create(NULL),
+                                           ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+  esp_zb_ep_list_add_gateway_ep(ep_list, cluster_list, endpoint_config);
+  esp_zb_device_register(ep_list);
   ESP_ERROR_CHECK(esp_zb_start(false));
   esp_zb_stack_main_loop();
+  vTaskDelete(NULL);
 }
 
 void app_main(void) {
