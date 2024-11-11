@@ -82,6 +82,9 @@ void setup() {
   Serial.println();
 }
 
+
+static uint32_t click_count = 0;
+
 void loop() {
   // Handle button switch in loop()
   if (digitalRead(SWITCH_PIN) == LOW) {  // Push button pressed
@@ -89,8 +92,12 @@ void loop() {
     while (digitalRead(SWITCH_PIN) == LOW) {
       delay(50);
     }
-    // Toggle light
-    zbSwitch.lightToggle();
+
+    if (++click_count % 2 == 0) {
+      zbSwitch.setLightColor(255, 100, 30);
+    }else{
+      zbSwitch.setLightColor(255, 40, 0);
+    }
   }
   // Handle serial input to control color and level of the light
   if (Serial.available()) {
@@ -141,9 +148,9 @@ void loop() {
   }
 
   // print the bound devices (lights) every 30 seconds
-  static uint32_t last_print = 0;
-  if (millis() - last_print > 30000) {
-    last_print = millis();
-    zbSwitch.printBoundDevices();
-  }
+  /* static uint32_t last_print = 0; */
+  /* if (millis() - last_print > 30000) { */
+  /*   last_print = millis(); */
+  /*   zbSwitch.printBoundDevices(); */
+  /* } */
 }

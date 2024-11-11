@@ -10,7 +10,12 @@ with serial.Serial('/dev/ttyACM0', 115200) as port:
     # wait()
     port.write(b'color')
     time.sleep(1)
-    port.write(struct.pack("<BBB", 255, 100, 0))
+
+    # Night?
+    port.write(struct.pack("<BBB", 255, 40, 0))
+
+    # Day?
+    # port.write(struct.pack("<BBB", 255, 100, 30))
 
     print("reading responses")
     while True:
