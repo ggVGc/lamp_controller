@@ -15,35 +15,35 @@
 /**
  * @brief This example demonstrates Zigbee color dimmer switch.
  *
- * The example demonstrates how to use Zigbee library to control a RGB light bulb.
- * The RGB light bulb is a Zigbee end device, which is controlled by a Zigbee coordinator (Switch).
- * To turn on/off the light, push the button on the switch.
- * To change the color or level of the light, send serial commands to the switch.
+ * The example demonstrates how to use Zigbee library to control a RGB light
+ * bulb. The RGB light bulb is a Zigbee end device, which is controlled by a
+ * Zigbee coordinator (Switch). To turn on/off the light, push the button on the
+ * switch. To change the color or level of the light, send serial commands to
+ * the switch.
  *
- * By setting the switch to allow multiple binding, so it can bind to multiple lights.
- * Also every 30 seconds, all bound lights are printed to the serial console.
+ * By setting the switch to allow multiple binding, so it can bind to multiple
+ * lights. Also every 30 seconds, all bound lights are printed to the serial
+ * console.
  *
  * Proper Zigbee mode must be selected in Tools->Zigbee mode
- * and also the correct partition scheme must be selected in Tools->Partition Scheme.
+ * and also the correct partition scheme must be selected in Tools->Partition
+ * Scheme.
  *
  * Please check the README.md for instructions and more detailed description.
  *
  * Created by Jan Procházka (https://github.com/P-R-O-C-H-Y/)
  */
 
-#ifndef ZIGBEE_MODE_ZCZR
-#error "Zigbee coordinator mode is not selected in Tools->Zigbee mode"
-#endif
-
 #include "ZigbeeCore.h"
 #include "ep/ZigbeeColorDimmerSwitch.h"
 
 /* Switch configuration */
-#define SWITCH_PIN             9  // ESP32-C6/H2 Boot button
+#define SWITCH_PIN 9 // ESP32-C6/H2 Boot button
 #define SWITCH_ENDPOINT_NUMBER 5
 
 /* Zigbee switch */
-ZigbeeColorDimmerSwitch zbSwitch = ZigbeeColorDimmerSwitch(SWITCH_ENDPOINT_NUMBER);
+ZigbeeColorDimmerSwitch zbSwitch =
+    ZigbeeColorDimmerSwitch(SWITCH_ENDPOINT_NUMBER);
 
 /********************* Arduino functions **************************/
 void setup() {
@@ -53,104 +53,83 @@ void setup() {
     delay(10);
   }
 
-  //Init button switch
+  // Init button switch
   pinMode(SWITCH_PIN, INPUT_PULLUP);
-
-  //Optional: set Zigbee device name and model
-  zbSwitch.setManufacturerAndModel("Espressif", "ZigbeeSwitch");
-
-  //Optional to allow multiple light to bind to the switch
+  // Optional: set Zigbee device name and model
+  zbSwitch.setManufacturerAndModel("ggvgc", "LampController");
+  // Optional to allow multiple light to bind to the switch
   zbSwitch.allowMultipleBinding(false);
-
-  //Add endpoint to Zigbee Core
+  // Add endpoint to Zigbee Core
   Zigbee.addEndpoint(&zbSwitch);
-
-  //Open network for 180 seconds after boot
-  Zigbee.setRebootOpenNetwork(180);
-
-  //When all EPs are registered, start Zigbee with ZIGBEE_COORDINATOR mode
+  // Open network for 180 seconds after boot
+  Zigbee.setRebootOpenNetwork(30);
+  // When all EPs are registered, start Zigbee with ZIGBEE_COORDINATOR mode
   Zigbee.begin(ZIGBEE_COORDINATOR);
-
-  Serial.println("Waiting for Light to bound to the switch");
-  //Wait for switch to bound to a light:
+  Serial.println("Waiting for light to bind");
   while (!zbSwitch.isBound()) {
     Serial.printf(".");
     delay(500);
   }
-  Serial.println();
-  Serial.printf("Light bound!");
-  Serial.println();
+  Serial.printf("\nLight bound!\n");
 }
 
+struct Color {
+  Color(uint8_t r, uint8_t g, uint8_t b, uint8_t level)
+      : r(r), g(g), b(b), level(level) {
+  }
 
-static uint32_t click_count = 0;
+  Color(uint8_t r, uint8_t g, uint8_t b) : Color(r, g, b, 255) {
+  }
+
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+  uint8_t level;
+};
+
+std::vector<Color> colors = {Color(255, 80, 20),   Color(255, 70, 20),
+                             Color(255, 50, 15),   Color(255, 40, 0),
+                             Color(255, 20, 0),    Color(255, 0, 0),
+                             Color(255, 0, 0, 220)};
 
 void loop() {
-  // Handle button switch in loop()
-  if (digitalRead(SWITCH_PIN) == LOW) {  // Push button pressed
-    // Key debounce handling
+  static uint32_t click_count = 0;
+  if (digitalRead(SWITCH_PIN) == LOW) {
     while (digitalRead(SWITCH_PIN) == LOW) {
       delay(50);
     }
 
-    if (++click_count % 2 == 0) {
-      zbSwitch.setLightColor(255, 100, 30);
-    }else{
-      zbSwitch.setLightColor(255, 40, 0);
-    }
+    const Color &color = colors[click_count % colors.size()];
+    zbSwitch.setLightColor(color.r, color.g, color.b);
+    delay(100);
+    zbSwitch.setLightLevel(color.level);
+    click_count++;
   }
-  // Handle serial input to control color and level of the light
+
   if (Serial.available()) {
-    String command = Serial.readString();
+    uint8_t command;
+    const uint8_t bytes_read = Serial.readBytes(&command, 1);
 
-    if (command == "on") {
-      zbSwitch.lightOn();
-    } else if (command == "off") {
-      zbSwitch.lightOff();
-    } else if (command == "toggle") {
-      zbSwitch.lightToggle();
-    } else if (command == "red") {
-      zbSwitch.setLightColor(255, 0, 0);
-    } else if (command == "green") {
-      zbSwitch.setLightColor(0, 255, 0);
-    } else if (command == "blue") {
-      zbSwitch.setLightColor(0, 0, 255);
-    } else if (command == "white") {
-      zbSwitch.setLightColor(255, 255, 255);
-    /* } else if (command == "hue") { */
-    /*   int value = Serial.parseInt(); */
-    /*   zbSwitch.setLightColorHue(value); */
-    /* } else if (command == "saturation") { */
-    /*   int value = Serial.parseInt(); */
-    /*   zbSwitch.setLightColorSaturation(value); */
-    } else if (command == "color") {
-      unsigned char colors[3];
-      int bytes_read = Serial.readBytes(colors, 3);
-      Serial.printf("Bytes read: %i\n", bytes_read);
-      unsigned char red = colors[0];
-      unsigned char green = colors[1];
-      unsigned char blue = colors[2];
-      Serial.printf("Color: %i, %i, %i\n", red, green, blue);
-      zbSwitch.setLightColor(red, green, blue);
-      Serial.println("Set color");
-    } else if (command == "level") {
-      //wait for level value
-      Serial.println("Enter level value (0-255):");
-      while (!Serial.available()) {
-        delay(100);
+    if (bytes_read == 1) {
+      switch (command) {
+      case 0: {
+        uint8_t colors[3];
+        int bytes_read = Serial.readBytes(colors, 3);
+        uint8_t red = colors[0];
+        uint8_t green = colors[1];
+        uint8_t blue = colors[2];
+        Serial.printf("Set color: %i, %i, %i\n", red, green, blue);
+        zbSwitch.setLightColor(red, green, blue);
+      } break;
+      case 1: {
+        uint8_t level;
+        Serial.readBytes(&level, 1);
+        Serial.printf("Set level: %i\n", level);
+        zbSwitch.setLightLevel(level);
+      } break;
+      default:
+        Serial.printf("Unknown command: %i\n", command);
       }
-      int level = Serial.parseInt();
-      zbSwitch.setLightLevel(level);
-    } else {
-      Serial.println("Unknown command");
-      Serial.println(command);
     }
   }
-
-  // print the bound devices (lights) every 30 seconds
-  /* static uint32_t last_print = 0; */
-  /* if (millis() - last_print > 30000) { */
-  /*   last_print = millis(); */
-  /*   zbSwitch.printBoundDevices(); */
-  /* } */
 }
